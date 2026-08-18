@@ -511,7 +511,7 @@ class CyclicTopologyTest(absltest.TestCase):
           input_struc, ((internal.atom1, internal.atom2),)
       )
 
-  def test_token_bond_pairs_require_one_non_h2t_declared_edge(self):
+  def test_token_bond_pairs_require_non_h2t_declared_edges(self):
     h2t = cyclic_topology.TopologyEdge(
         atom1=('P', 1, 'N'),
         atom2=('P', 8, 'C'),
@@ -532,9 +532,36 @@ class CyclicTopologyTest(absltest.TestCase):
       cyclic_topology.validate_token_bond_pairs(
           (h2t, disulfide), ((('P', 1), ('P', 8)),)
       )
-    with self.assertRaisesRegex(ValueError, 'exactly one'):
+    with self.assertRaisesRegex(ValueError, 'at least one'):
       cyclic_topology.validate_token_bond_pairs(
           (h2t, disulfide), ((('P', 3), ('P', 6)),)
+      )
+
+  def test_token_bond_pair_collapses_multiple_non_h2t_edges(self):
+    head_lariat = cyclic_topology.TopologyEdge(
+        atom1=('P', 5, 'CD'),
+        atom2=('P', 1, 'N'),
+        kind='head_lariat',
+    )
+    tail_lariat = cyclic_topology.TopologyEdge(
+        atom1=('P', 1, 'NZ'),
+        atom2=('P', 5, 'C'),
+        kind='tail_lariat',
+    )
+    token_pair = ((('P', 5), ('P', 1)),)
+    self.assertEqual(
+        cyclic_topology.validate_token_bond_pairs(
+            (head_lariat, tail_lariat), token_pair
+        ),
+        ((('P', 1), ('P', 5)),),
+    )
+
+    h2t = cyclic_topology.TopologyEdge(
+        atom1=('P', 1, 'N'), atom2=('P', 5, 'C'), kind='head_to_tail'
+    )
+    with self.assertRaisesRegex(ValueError, 'cannot receive'):
+      cyclic_topology.validate_token_bond_pairs(
+          (h2t, tail_lariat), token_pair
       )
 
   def test_isopeptide_hint_is_endpoint_exact_without_crosslink_rpe(self):

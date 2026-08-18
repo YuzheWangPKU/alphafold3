@@ -925,7 +925,7 @@ def validate_token_bond_pairs(
     topology_edges: Sequence[TopologyEdge],
     token_bond_pairs: Sequence[folding_input.TokenBondPair] | None,
 ) -> tuple[folding_input.TokenBondPair, ...]:
-  """Require every token hint to match one declared non-H2T atom edge."""
+  """Require every token hint to match declared non-H2T atom edges."""
   if not token_bond_pairs:
     return ()
 
@@ -970,12 +970,12 @@ def validate_token_bond_pairs(
       )
     seen_pairs.add(pair)
     matching_edges = edges_by_token_pair.get(pair, [])
-    if len(matching_edges) != 1:
+    if not matching_edges:
       raise ValueError(
-          'Each token-bond pair must match exactly one declared topology atom'
-          f' edge, got {len(matching_edges)} for {raw_pair}.'
+          'Each token-bond pair must match at least one declared topology atom'
+          f' edge, got none for {raw_pair}.'
       )
-    if matching_edges[0].kind == 'head_to_tail':
+    if any(edge.kind == 'head_to_tail' for edge in matching_edges):
       raise ValueError(
           'Head-to-tail closure uses automatic RPE and cannot receive a'
           f' token-bond hint: {raw_pair}.'

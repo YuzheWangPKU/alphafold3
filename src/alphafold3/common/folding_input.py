@@ -993,8 +993,9 @@ class Input:
       define unique atom names.
     token_bond_pairs: Optional residue-token pairs that receive the learned
       token-bond hint. Each token is defined by (chain_id, res_id). These pairs
-      do not create chemical bonds and must match declared non-head-to-tail
-      polymer-polymer bonds in bonded_atom_pairs.
+      do not create chemical bonds and must match one or more declared
+      non-head-to-tail polymer-polymer bonds in bonded_atom_pairs. Multiple
+      matching atom bonds collapse to the same binary token-pair hint.
     user_ccd: Optional user-defined chemical component dictionary in the CIF
       format. This can be used to provide additional CCD entries that are not
       present in the default CCD and thus define arbitrary new ligands. This is
