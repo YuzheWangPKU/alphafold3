@@ -32,6 +32,7 @@ class Batch:
   msa: features.MSA
   templates: features.Templates
   token_features: features.TokenFeatures
+  cyclic_topology: features.CyclicTopologyFeatures
   ref_structure: features.RefStructure
   predicted_structure_info: features.PredictedStructureInfo
   polymer_ligand_bond_info: features.PolymerLigandBondInfo
@@ -52,6 +53,7 @@ class Batch:
         msa=features.MSA.from_data_dict(batch),
         templates=features.Templates.from_data_dict(batch),
         token_features=features.TokenFeatures.from_data_dict(batch),
+        cyclic_topology=features.CyclicTopologyFeatures.from_data_dict(batch),
         ref_structure=features.RefStructure.from_data_dict(batch),
         predicted_structure_info=features.PredictedStructureInfo.from_data_dict(
             batch
@@ -74,6 +76,7 @@ class Batch:
         **self.msa.as_data_dict(),
         **self.templates.as_data_dict(),
         **self.token_features.as_data_dict(),
+        **self.cyclic_topology.as_data_dict(),
         **self.ref_structure.as_data_dict(),
         **self.predicted_structure_info.as_data_dict(),
         **self.polymer_ligand_bond_info.as_data_dict(),

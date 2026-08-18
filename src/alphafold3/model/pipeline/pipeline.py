@@ -29,8 +29,10 @@ from alphafold3 import structure
 from alphafold3.common import base_config
 from alphafold3.common import folding_input
 from alphafold3.constants import chemical_components
+from alphafold3.model import cyclic_topology
 from alphafold3.model import feat_batch
 from alphafold3.model import features
+from alphafold3.model.atom_layout import atom_layout
 from alphafold3.model.pipeline import inter_chain_bonds
 from alphafold3.model.pipeline import structure_cleaning
 from alphafold3.structure import chemical_components as struc_chem_comps
@@ -174,6 +176,8 @@ class WholePdbPipeline:
       unpaired_msa_by_chain_id: Mapping[str, str],
       paired_msa_by_chain_id: Mapping[str, str],
       templates_by_chain_id: Mapping[str, Sequence[folding_input.Template]],
+      topology_edges: Sequence[cyclic_topology.TopologyEdge] = (),
+      token_bond_pairs: Sequence[folding_input.TokenBondPair] = (),
       random_seed: int | None = None,
   ) -> feat_batch.Batch:
     """Computes features for a structure and associated MSAs/templates."""
@@ -199,6 +203,10 @@ class WholePdbPipeline:
         remove_bad_bonds=True,
         fix_standalone_glycans=self._config.fix_standalone_glycans,
     )
+    if topology_edges:
+      cleaned_struc = cyclic_topology.restore_topology_bonds(
+          cleaned_struc, topology_edges
+      )
 
     # No chains after cleaning.
     if cleaned_struc.num_chains == 0:
@@ -218,6 +226,13 @@ class WholePdbPipeline:
     if polymer_ligand_bonds and not polymer_ligand_bonds.atom_name.size:
       polymer_ligand_bonds = None
 
+    if topology_edges:
+      topology_bonds = cyclic_topology.topology_bond_layout(
+          atom_layout.atom_layout_from_structure(cleaned_struc), topology_edges
+      )
+    else:
+      topology_bonds = None
+
     # Create the flat output AtomLayout
     empty_output_struc, flat_output_layout = (
         structure_cleaning.create_empty_output_struc_and_layout(
@@ -225,6 +240,8 @@ class WholePdbPipeline:
             ccd=ccd,
             polymer_ligand_bonds=polymer_ligand_bonds,
             ligand_ligand_bonds=ligand_ligand_bonds,
+            topology_bonds=topology_bonds,
+            topology_edges=topology_edges,
             drop_ligand_leaving_atoms=self._config.drop_ligand_leaving_atoms,
             fix_standalone_glycans=self._config.fix_standalone_glycans,
         )
@@ -303,6 +320,11 @@ class WholePdbPipeline:
     batch_token_features = features.TokenFeatures.compute_features(
         all_tokens=all_tokens,
         padding_shapes=padding_shapes,
+    )
+    batch_cyclic_topology = features.CyclicTopologyFeatures.compute_features(
+        all_tokens=all_tokens,
+        topology_edges=topology_edges,
+        token_bond_pairs=token_bond_pairs,
     )
 
     # Create reference structure features
@@ -425,6 +447,7 @@ class WholePdbPipeline:
         msa=batch_msa,
         templates=batch_templates,
         token_features=batch_token_features,
+        cyclic_topology=batch_cyclic_topology,
         ref_structure=batch_ref_structure,
         predicted_structure_info=batch_predicted_structure_info,
         polymer_ligand_bond_info=polymer_ligand_bond_info,
@@ -446,6 +469,10 @@ class WholePdbPipeline:
   ) -> features.BatchDict:
     """Takes requests from in_queue, adds (key, serialized ex) to out_queue."""
     struct = fold_input.to_structure(ccd=ccd)
+    topology_edges = cyclic_topology.input_topology_edges(fold_input, struct)
+    token_bond_pairs = cyclic_topology.validate_token_bond_pairs(
+        topology_edges, fold_input.token_bond_pairs
+    )
     unpaired_msa_by_chain_id = {}
     paired_msa_by_chain_id = {}
     templates_by_chain_id = {}
@@ -465,6 +492,8 @@ class WholePdbPipeline:
         unpaired_msa_by_chain_id=unpaired_msa_by_chain_id,
         paired_msa_by_chain_id=paired_msa_by_chain_id,
         templates_by_chain_id=templates_by_chain_id,
+        topology_edges=topology_edges,
+        token_bond_pairs=token_bond_pairs,
         random_seed=random_seed,
     )
     np_example = batch.as_data_dict()

@@ -41,6 +41,8 @@ import rdkit.Chem as rd_chem
 import zstandard as zstd
 
 BondAtomId: TypeAlias = tuple[str, int, str]
+TokenId: TypeAlias = tuple[str, int]
+TokenBondPair: TypeAlias = tuple[TokenId, TokenId]
 
 JSON_DIALECT: Final[str] = 'alphafold3'
 JSON_VERSIONS: Final[tuple[int, ...]] = (1, 2, 3, 4)
@@ -989,6 +991,10 @@ class Input:
       IDs must be set if there are any bonded atoms. Residue IDs are 1-indexed.
       Atoms in ligands defined by SMILES can't be bonded since SMILES doesn't
       define unique atom names.
+    token_bond_pairs: Optional residue-token pairs that receive the learned
+      token-bond hint. Each token is defined by (chain_id, res_id). These pairs
+      do not create chemical bonds and must match declared non-head-to-tail
+      polymer-polymer bonds in bonded_atom_pairs.
     user_ccd: Optional user-defined chemical component dictionary in the CIF
       format. This can be used to provide additional CCD entries that are not
       present in the default CCD and thus define arbitrary new ligands. This is
@@ -1000,6 +1006,7 @@ class Input:
   chains: Sequence[ProteinChain | RnaChain | DnaChain | Ligand]
   rng_seeds: Sequence[int]
   bonded_atom_pairs: Sequence[tuple[BondAtomId, BondAtomId]] | None = None
+  token_bond_pairs: Sequence[TokenBondPair] | None = None
   user_ccd: str | None = None
 
   def __post_init__(self):
@@ -1023,12 +1030,21 @@ class Input:
     if len(set(chain_ids)) != len(chain_ids):
       raise ValueError('Input JSON contains sequences with duplicate IDs.')
 
-    # Use hashable types for chains, rng_seeds, and bonded_atom_pairs.
+    # Use hashable types for chains, rng_seeds, and pair declarations.
     object.__setattr__(self, 'chains', tuple(self.chains))
     object.__setattr__(self, 'rng_seeds', tuple(self.rng_seeds))
     if self.bonded_atom_pairs is not None:
       object.__setattr__(
           self, 'bonded_atom_pairs', tuple(self.bonded_atom_pairs)
+      )
+    if self.token_bond_pairs is not None:
+      object.__setattr__(
+          self,
+          'token_bond_pairs',
+          tuple(
+              (tuple(token1), tuple(token2))
+              for token1, token2 in self.token_bond_pairs
+          ),
       )
 
     if self.user_ccd is not None:
@@ -1164,6 +1180,7 @@ class Input:
             'modelSeeds',
             'sequences',
             'bondedAtomPairs',
+            'tokenBondPairs',
             'userCCD',
             'userCCDPath',
         },
@@ -1282,6 +1299,56 @@ class Input:
       if len(bonded_atom_pairs) != len(set(bonded_atom_pairs)):
         raise ValueError(f'Bonds are not unique: {bonded_atom_pairs}')
 
+    token_bond_pairs = None
+    if pairs := raw_json.get('tokenBondPairs'):
+      token_bond_pairs = []
+      normalised_pairs = set()
+      protein_chain_ids = {
+          chain.id for chain in chains if isinstance(chain, ProteinChain)
+      }
+      for pair in pairs:
+        if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+          raise ValueError(
+              f'Token-bond pair {pair} must contain exactly 2 tokens.'
+          )
+        token1, token2 = pair
+        for token in (token1, token2):
+          if (
+              not isinstance(token, (list, tuple))
+              or len(token) != 2
+              or not isinstance(token[0], str)
+              or not isinstance(token[1], int)
+          ):
+            raise ValueError(
+                f'Token {token} in token-bond pair {pair} must have 2'
+                ' components: (chain_id: str, res_id: int).'
+            )
+          if token[0] not in protein_chain_ids:
+            raise ValueError(
+                f'Token-bond pair {pair} must reference protein chains.'
+            )
+          if not 0 < token[1] <= chain_lengths[token[0]]:
+            raise ValueError(
+                f'Invalid residue ID in token-bond pair {pair}.'
+            )
+        token1 = (token1[0], token1[1])
+        token2 = (token2[0], token2[1])
+        if token1 == token2:
+          raise ValueError(
+              f'Token-bond pair {pair} has the same endpoint twice.'
+          )
+        if token1[0] != token2[0]:
+          raise ValueError(
+              f'Token-bond pair {pair} must stay within one peptide chain.'
+          )
+        normalised = tuple(sorted((token1, token2)))
+        if normalised in normalised_pairs:
+          raise ValueError(
+              f'Duplicate or reversed duplicate token-bond pair: {pair}.'
+          )
+        normalised_pairs.add(normalised)
+        token_bond_pairs.append((token1, token2))
+
     user_ccd = raw_json.get('userCCD')
     user_ccd_path = raw_json.get('userCCDPath')
     if user_ccd and user_ccd_path:
@@ -1296,6 +1363,7 @@ class Input:
         chains=chains,
         rng_seeds=[int(seed) for seed in raw_json['modelSeeds']],
         bonded_atom_pairs=bonded_atom_pairs,
+        token_bond_pairs=token_bond_pairs,
         user_ccd=user_ccd,
     )
 
@@ -1495,18 +1563,18 @@ class Input:
       chain = deduped_chains[chain_content_hash]
       sequences.append(chain.to_dict(seq_id=ids if len(ids) > 1 else ids[0]))
 
-    alphafold_json = json.dumps(
-        {
-            'dialect': JSON_DIALECT,
-            'version': JSON_VERSION,
-            'name': self.name,
-            'sequences': sequences,
-            'modelSeeds': self.rng_seeds,
-            'bondedAtomPairs': self.bonded_atom_pairs,
-            'userCCD': self.user_ccd,
-        },
-        indent=2,
-    )
+    json_data = {
+        'dialect': JSON_DIALECT,
+        'version': JSON_VERSION,
+        'name': self.name,
+        'sequences': sequences,
+        'modelSeeds': self.rng_seeds,
+        'bondedAtomPairs': self.bonded_atom_pairs,
+        'userCCD': self.user_ccd,
+    }
+    if self.token_bond_pairs:
+      json_data['tokenBondPairs'] = self.token_bond_pairs
+    alphafold_json = json.dumps(json_data, indent=2)
     # Remove newlines from the query/template indices arrays. We match the
     # queryIndices/templatesIndices with a non-capturing group. We then match
     # the entire region between the square brackets by looking for lines

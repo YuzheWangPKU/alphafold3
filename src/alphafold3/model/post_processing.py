@@ -24,6 +24,7 @@ import datetime
 import io
 from alphafold3 import version
 from alphafold3.model import confidence_types
+from alphafold3.model import cyclic_topology
 from alphafold3.model import mmcif_metadata
 from alphafold3.model import model
 from etils import epath
@@ -73,6 +74,16 @@ def post_process_inference_result(
   if keep_license:
     cif = mmcif_metadata.add_legal_comment(cif)
   cif = cif.encode('utf-8')
+  if bool(
+      np.asarray(
+          inference_result.debug_outputs.get(
+              'cyclic_topology_graph_preserving', False
+          )
+      )
+  ):
+    cyclic_topology.validate_serialized_structure(
+        inference_result.predicted_structure, cif
+    )
   confidence_1d = confidence_types.AtomConfidence.from_inference_result(
       inference_result
   )

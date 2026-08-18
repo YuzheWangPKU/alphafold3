@@ -19,11 +19,14 @@
 
 """Prepare PDB structure for training or inference."""
 
+from collections.abc import Sequence
+
 from absl import logging
 from alphafold3 import structure
 from alphafold3.constants import chemical_component_sets
 from alphafold3.constants import chemical_components
 from alphafold3.constants import mmcif_names
+from alphafold3.model import cyclic_topology
 from alphafold3.model.atom_layout import atom_layout
 from alphafold3.model.pipeline import inter_chain_bonds
 import numpy as np
@@ -259,6 +262,8 @@ def create_empty_output_struc_and_layout(
     skip_unk: bool = False,
     polymer_ligand_bonds: atom_layout.AtomLayout | None = None,
     ligand_ligand_bonds: atom_layout.AtomLayout | None = None,
+    topology_bonds: atom_layout.AtomLayout | None = None,
+    topology_edges: Sequence[cyclic_topology.TopologyEdge] = (),
     drop_ligand_leaving_atoms: bool = False,
     fix_standalone_glycans: bool = False,
 ) -> tuple[structure.Structure, atom_layout.AtomLayout]:
@@ -271,6 +276,8 @@ def create_empty_output_struc_and_layout(
     skip_unk: Whether to remove unknown residues from structure.
     polymer_ligand_bonds: Bond information for polymer-ligand pairs.
     ligand_ligand_bonds: Bond information for ligand-ligand pairs.
+    topology_bonds: Validated polymer-polymer topology bonds.
+    topology_edges: Typed topology edges used for exact leaving-group handling.
     drop_ligand_leaving_atoms: Flag for handling leaving atoms for ligands.
     fix_standalone_glycans: If True, standalone glycans are preserved when
       drop_ligand_leaving_atoms is True.
@@ -302,6 +309,17 @@ def create_empty_output_struc_and_layout(
           (chain_ids[0], res_ids[0], atom_names[0]),
           (chain_ids[1], res_ids[1], atom_names[1]),
       ))
+  if topology_bonds:
+    for chain_ids, res_ids, atom_names in zip(
+        topology_bonds.chain_id,
+        topology_bonds.res_id,
+        topology_bonds.atom_name,
+        strict=True,
+    ):
+      bonded_atom_pairs.append((
+          (chain_ids[0], res_ids[0], atom_names[0]),
+          (chain_ids[1], res_ids[1], atom_names[1]),
+      ))
   residues = atom_layout.residues_from_structure(
       struc, include_missing_residues=True
   )
@@ -316,6 +334,10 @@ def create_empty_output_struc_and_layout(
       drop_ligand_leaving_atoms=drop_ligand_leaving_atoms,
       fix_standalone_glycans=fix_standalone_glycans,
   )
+  if topology_edges:
+    flat_output_layout = cyclic_topology.filter_topology_leaving_atoms(
+        flat_output_layout, topology_edges, ccd
+    )
 
   empty_output_struc = atom_layout.make_structure(
       flat_layout=flat_output_layout,
@@ -327,6 +349,10 @@ def create_empty_output_struc_and_layout(
   if bonded_atom_pairs:
     empty_output_struc = empty_output_struc.add_bonds(
         bonded_atom_pairs, bond_type=mmcif_names.COVALENT_BOND
+    )
+  if topology_edges:
+    cyclic_topology.validate_topology_output(
+        empty_output_struc, topology_edges
     )
 
   return empty_output_struc, flat_output_layout

@@ -39,6 +39,16 @@ import jax.numpy as jnp
 SIGMA_DATA = 16.0
 
 
+def topology_relative_encoding(batch: feat_batch.Batch) -> jax.Array:
+  """Create diffusion-conditioning RPE with automatic H2T offsets."""
+  return featurization.create_relative_encoding(
+      seq_features=batch.token_features,
+      max_relative_idx=32,
+      max_relative_chain=2,
+      cyclic_topology_features=batch.cyclic_topology,
+  )
+
+
 def random_rotation(key):
   # Create a random rotation (Gram-Schmidt orthogonalization of two
   # random normal vectors)
@@ -150,11 +160,9 @@ class DiffusionHead(hk.Module):
     single_embedding = use_conditioning * embeddings['single']
     pair_embedding = use_conditioning * embeddings['pair']
 
-    rel_features = featurization.create_relative_encoding(
-        seq_features=batch.token_features,
-        max_relative_idx=32,
-        max_relative_chain=2,
-    ).astype(pair_embedding.dtype)
+    rel_features = topology_relative_encoding(batch).astype(
+        pair_embedding.dtype
+    )
     features_2d = jnp.concatenate([pair_embedding, rel_features], axis=-1)
     pair_cond = hm.Linear(
         self.config.conditioning.pair_channel,

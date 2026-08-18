@@ -36,6 +36,39 @@ import jax
 import jax.numpy as jnp
 
 
+def add_topology_bond_hints(
+    contact_matrix: jax.Array,
+    topology_features: features.CyclicTopologyFeatures,
+) -> jax.Array:
+  """Add only configured topology endpoint pairs as symmetric bond hints."""
+  topology_bond_indices = topology_features.token_bond_indices
+  topology_bond_mask = topology_features.token_bond_mask.astype(
+      contact_matrix.dtype
+  )
+  contact_matrix = contact_matrix.at[
+      topology_bond_indices[:, 0], topology_bond_indices[:, 1]
+  ].add(topology_bond_mask)
+  contact_matrix = contact_matrix.at[
+      topology_bond_indices[:, 1], topology_bond_indices[:, 0]
+  ].add(topology_bond_mask)
+  return jnp.clip(contact_matrix, 0.0, 1.0)
+
+
+def topology_relative_encoding(
+    batch: feat_batch.Batch,
+    *,
+    max_relative_idx: int,
+    max_relative_chain: int,
+) -> jax.Array:
+  """Create the Evoformer RPE with automatic H2T topology offsets."""
+  return featurization.create_relative_encoding(
+      seq_features=batch.token_features,
+      max_relative_idx=max_relative_idx,
+      max_relative_chain=max_relative_chain,
+      cyclic_topology_features=batch.cyclic_topology,
+  )
+
+
 class Evoformer(hk.Module):
   """Creates 'single' and 'pair' embeddings."""
 
@@ -87,8 +120,8 @@ class Evoformer(hk.Module):
       self, batch: feat_batch.Batch, pair_activations: jnp.ndarray
   ) -> jnp.ndarray:
     """Add relative position encodings."""
-    rel_feat = featurization.create_relative_encoding(
-        seq_features=batch.token_features,
+    rel_feat = topology_relative_encoding(
+        batch,
         max_relative_idx=self.config.max_relative_idx,
         max_relative_chain=self.config.max_relative_chain,
     )
@@ -167,6 +200,10 @@ class Evoformer(hk.Module):
     contact_matrix = contact_matrix.at[
         gather_idxs[:, 0], gather_idxs[:, 1]
     ].set(1.0)
+
+    contact_matrix = add_topology_bond_hints(
+        contact_matrix, batch.cyclic_topology
+    )
 
     # Because all the padded index's are 0's.
     contact_matrix = contact_matrix.at[0, 0].set(0.0)

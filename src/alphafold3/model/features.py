@@ -38,6 +38,7 @@ from alphafold3.data import templates
 from alphafold3.data.tools import rdkit_utils
 from alphafold3.model import data3
 from alphafold3.model import data_constants
+from alphafold3.model import cyclic_topology
 from alphafold3.model import merging_features
 from alphafold3.model import msa_pairing
 from alphafold3.model.atom_layout import atom_layout
@@ -1046,6 +1047,72 @@ class TokenFeatures:
 jax.tree_util.register_dataclass(
     TokenFeatures,
     data_fields=[f.name for f in dataclasses.fields(TokenFeatures)],
+    meta_fields=[],
+)
+
+
+@dataclasses.dataclass(frozen=True)
+class CyclicTopologyFeatures:
+  """Compact cyclic-topology features carried with a featurised batch."""
+
+  rpe_token_indices: xnp_ndarray
+  rpe_token_mask: xnp_ndarray
+  rpe_pair_offsets: xnp_ndarray
+  token_bond_indices: xnp_ndarray
+  token_bond_mask: xnp_ndarray
+  graph_preserving: xnp_ndarray
+
+  @classmethod
+  def compute_features(
+      cls,
+      all_tokens: atom_layout.AtomLayout,
+      topology_edges: Sequence[cyclic_topology.TopologyEdge],
+      token_bond_pairs: Sequence[folding_input.TokenBondPair],
+  ) -> Self:
+    rpe_token_indices, rpe_token_mask, rpe_pair_offsets = (
+        cyclic_topology.build_rpe_override(all_tokens, topology_edges)
+    )
+    token_bond_indices, token_bond_mask = (
+        cyclic_topology.build_token_bond_indices(
+            all_tokens, token_bond_pairs
+        )
+    )
+    return cls(
+        rpe_token_indices=rpe_token_indices,
+        rpe_token_mask=rpe_token_mask,
+        rpe_pair_offsets=rpe_pair_offsets,
+        token_bond_indices=token_bond_indices,
+        token_bond_mask=token_bond_mask,
+        graph_preserving=np.asarray(bool(topology_edges), dtype=bool),
+    )
+
+  @classmethod
+  def from_data_dict(cls, batch: BatchDict) -> Self:
+    return cls(
+        rpe_token_indices=batch['cyclic_topology:rpe_token_indices'],
+        rpe_token_mask=batch['cyclic_topology:rpe_token_mask'],
+        rpe_pair_offsets=batch['cyclic_topology:rpe_pair_offsets'],
+        token_bond_indices=batch['cyclic_topology:token_bond_indices'],
+        token_bond_mask=batch['cyclic_topology:token_bond_mask'],
+        graph_preserving=batch['cyclic_topology:graph_preserving'],
+    )
+
+  def as_data_dict(self) -> BatchDict:
+    return {
+        'cyclic_topology:rpe_token_indices': self.rpe_token_indices,
+        'cyclic_topology:rpe_token_mask': self.rpe_token_mask,
+        'cyclic_topology:rpe_pair_offsets': self.rpe_pair_offsets,
+        'cyclic_topology:token_bond_indices': self.token_bond_indices,
+        'cyclic_topology:token_bond_mask': self.token_bond_mask,
+        'cyclic_topology:graph_preserving': self.graph_preserving,
+    }
+
+
+jax.tree_util.register_dataclass(
+    CyclicTopologyFeatures,
+    data_fields=[
+        f.name for f in dataclasses.fields(CyclicTopologyFeatures)
+    ],
     meta_fields=[],
 )
 

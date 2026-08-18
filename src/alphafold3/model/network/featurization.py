@@ -178,6 +178,7 @@ def create_relative_encoding(
     seq_features: features.TokenFeatures,
     max_relative_idx: int,
     max_relative_chain: int,
+    cyclic_topology_features: features.CyclicTopologyFeatures | None = None,
 ) -> jax.Array:
   """Add relative position encodings."""
   rel_feats = []
@@ -204,6 +205,25 @@ def create_relative_encoding(
 
   # Embed relative positions using a one-hot embedding of distance along chain
   offset = left_residue_index - right_residue_index
+  if cyclic_topology_features is not None:
+    offset = jnp.asarray(offset)
+    topology_token_indices = cyclic_topology_features.rpe_token_indices
+    topology_pair_mask = (
+        cyclic_topology_features.rpe_token_mask[:, None]
+        & cyclic_topology_features.rpe_token_mask[None, :]
+    )
+    native_selected_offsets = offset[
+        topology_token_indices[:, None], topology_token_indices[None, :]
+    ]
+    offset_delta = jnp.where(
+        topology_pair_mask,
+        cyclic_topology_features.rpe_pair_offsets.astype(offset.dtype)
+        - native_selected_offsets,
+        0,
+    )
+    offset = offset.at[
+        topology_token_indices[:, None], topology_token_indices[None, :]
+    ].add(offset_delta)
   clipped_offset = jnp.clip(
       offset + max_relative_idx, min=0, max=2 * max_relative_idx
   )

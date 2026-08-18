@@ -29,6 +29,7 @@ from absl import logging
 from alphafold3 import structure
 from alphafold3.common import base_config
 from alphafold3.model import confidences
+from alphafold3.model import cyclic_topology
 from alphafold3.model import feat_batch
 from alphafold3.model import features
 from alphafold3.model import model_config
@@ -146,6 +147,10 @@ def get_predicted_structure(
   )
   # Set manually/differently when adding metadata.
   pred_struc = pred_struc.copy_and_update_globals(release_date=None)
+  if bool(np.asarray(batch.cyclic_topology.graph_preserving)):
+    cyclic_topology.validate_structure_identity(
+        pred_struc, batch.convert_model_output.empty_output_struc
+    )
   return pred_struc
 
 
@@ -524,5 +529,9 @@ class Model(hk.Module):
               'token_res_ids': res_ids,
           },
           model_id=result['__identifier__'],
-          debug_outputs={},
+          debug_outputs={
+              'cyclic_topology_graph_preserving': np.asarray(
+                  batch.cyclic_topology.graph_preserving
+              )
+          },
       )
