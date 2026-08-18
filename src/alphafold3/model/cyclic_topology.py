@@ -169,11 +169,14 @@ def classify_declared_topology_edges(
       n_atom = atom1 if atom1[2] == 'N' else atom2
       c_atom = atom1 if atom1[2] == 'C' else atom2
       if (
-          records[n_atom].res_name not in residue_names.PROTEIN_TYPES
-          or records[c_atom].res_name not in residue_names.PROTEIN_TYPES
+          records[n_atom].res_name
+          not in residue_names.PROTEIN_TYPES_WITH_UNKNOWN
+          or records[c_atom].res_name
+          not in residue_names.PROTEIN_TYPES_WITH_UNKNOWN
       ):
         raise ValueError(
-            'A head-to-tail edge requires canonical amino-acid endpoints, got'
+            'A head-to-tail edge requires protein or UNK backbone endpoints,'
+            ' got'
             f' {records[n_atom].res_name} {n_atom} and'
             f' {records[c_atom].res_name} {c_atom}.'
         )

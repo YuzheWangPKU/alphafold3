@@ -85,6 +85,30 @@ class MmcifNumChainsError(Exception):
   """Raised if the mmcif file contains too many / too few chains."""
 
 
+def _prepare_structure_for_cleaning(
+    struct: structure.Structure,
+    topology_edges: Sequence[cyclic_topology.TopologyEdge],
+) -> tuple[structure.Structure, bool]:
+  """Preserves only declared all-UNK H2T chains."""
+  if not topology_edges:
+    return struct, True
+
+  unknown_chain_ids = set(struct.find_chains_with_unknown_sequence())
+  topology_chain_ids = {
+      chain_id
+      for edge in topology_edges
+      for chain_id in (edge.atom1[0], edge.atom2[0])
+  }
+  preserved_chain_ids = unknown_chain_ids & topology_chain_ids
+  if not preserved_chain_ids:
+    return struct, True
+
+  dropped_chain_ids = tuple(sorted(unknown_chain_ids - preserved_chain_ids))
+  if dropped_chain_ids:
+    struct = struct.filter_out(chain_id=dropped_chain_ids)
+  return struct, False
+
+
 class WholePdbPipeline:
   """Processes an entire mmcif entity and merges the content."""
 
@@ -188,12 +212,18 @@ class WholePdbPipeline:
     logging_name = f'{struct.name}, random_seed={random_seed}'
     logging.info('Processing %s', logging_name)
 
+    # Preserve an all-UNK chain only when it carries declared topology. This is
+    # needed for an unk_x H2T proposal, whose atoms are expanded from CCD below.
+    struct, drop_missing_sequence = _prepare_structure_for_cleaning(
+        struct, topology_edges
+    )
+
     # Clean structure.
     cleaned_struc = structure_cleaning.clean_structure(
         struct,
         ccd=ccd,
         drop_non_standard_atoms=True,
-        drop_missing_sequence=True,
+        drop_missing_sequence=drop_missing_sequence,
         filter_waters=True,
         filter_hydrogens=True,
         filter_leaving_atoms=self._config.drop_ligand_leaving_atoms,
