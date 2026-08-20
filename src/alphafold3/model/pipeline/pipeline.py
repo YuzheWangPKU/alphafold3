@@ -85,25 +85,29 @@ class MmcifNumChainsError(Exception):
   """Raised if the mmcif file contains too many / too few chains."""
 
 
+def _all_unknown_protein_chain_ids(
+    fold_input: folding_input.Input,
+) -> tuple[str, ...]:
+  """Returns protein chains explicitly supplied as all unknown residues."""
+  return tuple(
+      chain.id
+      for chain in fold_input.protein_chains
+      if set(chain.sequence) == {'X'}
+  )
+
+
 def _prepare_structure_for_cleaning(
     struct: structure.Structure,
-    topology_edges: Sequence[cyclic_topology.TopologyEdge],
+    preserved_unknown_chain_ids: Sequence[str],
 ) -> tuple[structure.Structure, bool]:
-  """Preserves only declared all-UNK H2T chains."""
-  if not topology_edges:
+  """Preserves explicitly supplied all-UNK protein chains."""
+  if not preserved_unknown_chain_ids:
     return struct, True
 
   unknown_chain_ids = set(struct.find_chains_with_unknown_sequence())
-  topology_chain_ids = {
-      chain_id
-      for edge in topology_edges
-      for chain_id in (edge.atom1[0], edge.atom2[0])
-  }
-  preserved_chain_ids = unknown_chain_ids & topology_chain_ids
-  if not preserved_chain_ids:
-    return struct, True
-
-  dropped_chain_ids = tuple(sorted(unknown_chain_ids - preserved_chain_ids))
+  dropped_chain_ids = tuple(
+      sorted(unknown_chain_ids - set(preserved_unknown_chain_ids))
+  )
   if dropped_chain_ids:
     struct = struct.filter_out(chain_id=dropped_chain_ids)
   return struct, False
@@ -202,6 +206,7 @@ class WholePdbPipeline:
       templates_by_chain_id: Mapping[str, Sequence[folding_input.Template]],
       topology_edges: Sequence[cyclic_topology.TopologyEdge] = (),
       token_bond_pairs: Sequence[folding_input.TokenBondPair] = (),
+      preserved_unknown_chain_ids: Sequence[str] = (),
       random_seed: int | None = None,
   ) -> feat_batch.Batch:
     """Computes features for a structure and associated MSAs/templates."""
@@ -212,10 +217,8 @@ class WholePdbPipeline:
     logging_name = f'{struct.name}, random_seed={random_seed}'
     logging.info('Processing %s', logging_name)
 
-    # Preserve an all-UNK chain only when it carries declared topology. This is
-    # needed for an unk_x H2T proposal, whose atoms are expanded from CCD below.
     struct, drop_missing_sequence = _prepare_structure_for_cleaning(
-        struct, topology_edges
+        struct, preserved_unknown_chain_ids
     )
 
     # Clean structure.
@@ -524,6 +527,7 @@ class WholePdbPipeline:
         templates_by_chain_id=templates_by_chain_id,
         topology_edges=topology_edges,
         token_bond_pairs=token_bond_pairs,
+        preserved_unknown_chain_ids=_all_unknown_protein_chain_ids(fold_input),
         random_seed=random_seed,
     )
     np_example = batch.as_data_dict()
